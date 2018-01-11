@@ -620,8 +620,7 @@ public class AsyncFSWAL extends AbstractFSWAL<AsyncWriter> {
     }
   }
 
-  @Override
-  protected AsyncWriter createWriterInstance(Path path) throws IOException {
+  protected final AsyncWriter createAsyncWriter(FileSystem fs, Path path) throws IOException {
     boolean overwrite = false;
     for (int retry = 0;; retry++) {
       try {
@@ -662,6 +661,11 @@ public class AsyncFSWAL extends AbstractFSWAL<AsyncWriter> {
     }
     throw new IOException("Failed to create wal log writer " + path + " after retrying " +
       createMaxRetries + " time(s)");
+  }
+
+  @Override
+  protected AsyncWriter createWriterInstance(Path path) throws IOException {
+    return createAsyncWriter(fs, path);
   }
 
   private void waitForSafePoint() {
@@ -706,21 +710,21 @@ public class AsyncFSWAL extends AbstractFSWAL<AsyncWriter> {
     } finally {
       consumeLock.unlock();
     }
-    return executeClose(closeExecutor, oldWriter);
+    return executeClose(oldWriter);
   }
 
   @Override
   protected void doShutdown() throws IOException {
     waitForSafePoint();
-    executeClose(closeExecutor, writer);
+    executeClose(writer);
     closeExecutor.shutdown();
     try {
       if (!closeExecutor.awaitTermination(waitOnShutdownInSeconds, TimeUnit.SECONDS)) {
-        LOG.error("We have waited " + waitOnShutdownInSeconds + " seconds but"
-          + " the close of async writer doesn't complete."
-          + "Please check the status of underlying filesystem"
-          + " or increase the wait time by the config \""
-          + ASYNC_WAL_WAIT_ON_SHUTDOWN_IN_SECONDS + "\"");
+        LOG.error("We have waited " + waitOnShutdownInSeconds + " seconds but" +
+          " the close of async writer doesn't complete." +
+          "Please check the status of underlying filesystem" +
+          " or increase the wait time by the config \"" + ASYNC_WAL_WAIT_ON_SHUTDOWN_IN_SECONDS +
+          "\"");
       }
     } catch (InterruptedException e) {
       LOG.error("The wait for close of async writer is interrupted");
@@ -733,7 +737,7 @@ public class AsyncFSWAL extends AbstractFSWAL<AsyncWriter> {
     }
   }
 
-  private static long executeClose(ExecutorService closeExecutor, AsyncWriter writer) {
+  protected final long executeClose(AsyncWriter writer) {
     long fileLength;
     if (writer != null) {
       fileLength = writer.getLength();
@@ -741,7 +745,7 @@ public class AsyncFSWAL extends AbstractFSWAL<AsyncWriter> {
         try {
           writer.close();
         } catch (IOException e) {
-          LOG.warn("close old writer failed", e);
+          LOG.warn("close writer failed", e);
         }
       });
     } else {
